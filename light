@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+
+MAX_FILE=${MAX_FILE:=/sys/class/backlight/intel_backlight/max_brightness}
+DEST_FILE=${DEST_FILE:=/sys/class/backlight/intel_backlight/brightness}
+
+debug() { [[ "${DEBUG}" ]] && echo "$*"; }
+
+calc_brightness() {
+  CUR="${2:-$(< ${DEST_FILE})}"
+  MAX="${3:-$(< ${MAX_FILE})}"
+  BRIGHTNESS="${1:-${MAX}}"
+
+  re='^(([+-]?)([0-9\.]+))(%?)$'
+  if ! [[ $BRIGHTNESS =~ $re ]] ; then
+    echo "error: Not a number" >&2; exit 1
+  fi
+  change="${BASH_REMATCH[1]}"
+  relative="${BASH_REMATCH[2]}"
+  amount="${BASH_REMATCH[3]}"
+  percent="${BASH_REMATCH[4]}"
+
+  debug "change=${change}"
+  debug "relative=${relative}"
+  debug "amount=${amount}"
+  debug "percent=${percent}"
+  debug "cur=${CUR}"
+
+  # Percentages should be based on MAX, not CUR
+  # Logically, if you set to 10% and then increase 10%, it should be at 20% not 11%
+  if [[ "${percent}" ]]; then
+    # Need to keep relative separate to keep bc from complaining about +x instead of just x
+    change=${relative}$(echo "${MAX} * (${amount} * .01)" | bc -l)
+  fi
+
+  if [[ "${relative}" ]]; then
+    BRIGHTNESS=$(echo "${CUR}${change}" | bc)
+  else
+    BRIGHTNESS="${change}"
+  fi
+  debug "${BRIGHTNESS}"
+
+  # Truncate floating point
+  BRIGHTNESS=$(echo "${BRIGHTNESS}/1" | bc)
+
+  # Bounds checks
+  if [ "${BRIGHTNESS}" -gt "${MAX}" ]; then
+    BRIGHTNESS="${MAX}"
+  elif [ "${BRIGHTNESS}" -lt "1" ]; then
+    BRIGHTNESS=1
+  fi
+
+  echo "${BRIGHTNESS}"
+}
+
+# Detect if we're running as a script or not
+if [ "$0" = "$BASH_SOURCE" ]; then
+  echo $(calc_brightness ${1}) \
+    | sudo tee "${DEST_FILE}"
+fi
